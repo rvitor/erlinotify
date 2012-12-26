@@ -99,7 +99,7 @@ handle_cast(Msg, State) ->
 %%          {noreply, State, Timeout} |
 %%          {stop, Reason, State} (terminate/2 is called)
 %%----------------------------------------------------------------------
-handle_info({inotify_event, _WD, file, ignored, _Cookie, _File} = Info, State) ->
+handle_info({inotify_event, _WD, file, ignored, _Cookie, _File} = _Info, State) ->
     %% ignore unwatched messages.
     {noreply, State};
 handle_info({inotify_event, Wd, Type, Event, Cookie, Name} = Info, State) ->
