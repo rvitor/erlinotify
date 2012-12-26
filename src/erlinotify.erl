@@ -99,6 +99,9 @@ handle_cast(Msg, State) ->
 %%          {noreply, State, Timeout} |
 %%          {stop, Reason, State} (terminate/2 is called)
 %%----------------------------------------------------------------------
+handle_info({inotify_event, _WD, file, ignored, _Cookie, _File} = Info, State) ->
+    %% ignore unwatched messages.
+    {noreply, State};
 handle_info({inotify_event, Wd, Type, Event, Cookie, Name} = Info, State) ->
   case ets:lookup(State#state.watchdescriptors, Wd) of
       [] -> ?log({unknown_file_watch, Info}),
