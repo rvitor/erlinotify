@@ -35,7 +35,7 @@ static ERL_NIF_TERM
 atom_file_type(ErlNifEnv* env, ulong mask);
 
 int
-read_events(void* obj);
+read_events(ErlNifEnv* env, void* obj);
 
 static void*
 thr_main(void* obj);

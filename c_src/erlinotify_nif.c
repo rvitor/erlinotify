@@ -29,7 +29,6 @@ erlinotify_nif_start(ErlNifEnv* env,
                      int argc,
                      const ERL_NIF_TERM argv[])
 {
-
   state_t* state =
     enif_alloc_resource(erlinotify_nif_RESOURCE,
                         sizeof(state_t));
@@ -181,13 +180,12 @@ erlinotify_nif_remove_watch(ErlNifEnv* env,
 }
 
 int
-read_events(void* obj)
+read_events(ErlNifEnv* env, void* obj)
 {
   state_t* state = (state_t*) obj;
   char buffer[EVENT_BUF_LEN];
   int buffer_i = 0, length;
   int count = 0;
-  ErlNifEnv* env = enif_alloc_env();
   ERL_NIF_TERM msg;
 
   length = read (state->fd, buffer, EVENT_BUF_LEN);
@@ -229,10 +227,11 @@ thr_main(void* obj)
     fd_set rfds;
     FD_ZERO (&rfds);
     FD_SET (state->fd, &rfds);
+    ErlNifEnv* env = enif_alloc_env();
     while(select (FD_SETSIZE, &rfds, NULL, NULL, NULL) > 0){
-      int r;
-      r = read_events(state);
+      read_events(env, state);
     }
+    enif_free_env(env);
     return NULL;
 }
 
