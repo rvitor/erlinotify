@@ -31,18 +31,24 @@
 %%                                   watchdescriptors = ets:tid(),
 %%                                   callback= term() }.
 
--record(state, {fd, callbacks, dirnames, watchdescriptors}).
+-type fd() :: non_neg_integer().
+-type callback() :: term().
+-record(state, {fd :: fd(), callbacks :: callback(), dirnames :: ets:tid(), watchdescriptors :: ets:tid()}).
 
 %% ------------------------------------------------------------------
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
+-spec start_link() -> {ok, Pid :: pid()} | ignore | {error, {already_started, Pid :: pid()} | term()}.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+% TODO: CB type?
+-spec watch(Dirname :: filelib:dirname(), any()) -> ok.
 watch(Name, CB) ->
     gen_server:cast(?MODULE, {watch, Name, CB}).
 
+-spec unwatch(Dirname :: filelib:dirname()) -> ok.
 unwatch(Name) ->
     gen_server:cast(?MODULE, {unwatch, Name}).
 
@@ -58,8 +64,11 @@ unwatch(Name) ->
 %%          {stop, Reason}
 %%----------------------------------------------------------------------
 
+-spec init(term())
+    -> {ok, term()} | {ok, term(), non_neg_integer() | infinity} 
+    | ignore | {stop, term()}.
 init([]) ->
-    {ok,Fd} = erlinotify_nif:start(),
+    {ok, Fd} = erlinotify_nif:start(),
     {ok, Ds} = ets_manager:give_me(dirnames),
     {ok, Wds} = ets_manager:give_me(watchdescriptors),
     {ok, CBs} = ets_manager:give_me(callbacks, [bag]),
@@ -74,6 +83,7 @@ init([]) ->
 %%          {stop, Reason, Reply, State} | (terminate/2 is called)
 %%          {stop, Reason, State} (terminate/2 is called)
 %%----------------------------------------------------------------------
+-spec handle_call(term(), {pid(), term()}, any()) -> {reply, ok, any()}.
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -83,6 +93,8 @@ handle_call(_Request, _From, State) ->
 %%          {noreply, State, Timeout} |
 %%          {stop, Reason, State} (terminate/2 is called)
 %%----------------------------------------------------------------------
+-spec handle_cast(term(), #state{})
+    -> {stop, normal, #state{}} | {noreply, #state{}}.
 handle_cast(stop, State) ->
   {stop, normal, State};
 handle_cast({watch, Watch, CB}, State) ->
@@ -99,6 +111,8 @@ handle_cast(Msg, State) ->
 %%          {noreply, State, Timeout} |
 %%          {stop, Reason, State} (terminate/2 is called)
 %%----------------------------------------------------------------------
+% TODO: be more specific about Info in spec
+-spec handle_info(Info :: term(), #state{}) -> {noreply, #state{}}.
 handle_info({inotify_event, _WD, file, ignored, _Cookie, _File} = _Info, State) ->
     %% ignore unwatched messages.
     {noreply, State};
@@ -135,10 +149,12 @@ handle_info(Info, State) ->
 %% Purpose: Shutdown the server
 %% Returns: any (ignored by gen_server)
 %%----------------------------------------------------------------------
-terminate(_Reason, State) ->
-    erlinotify_nif:stop(State#state.fd),
-    {close, State#state.fd}.
+-spec terminate(_, #state{}) -> {close, fd()}.
+terminate(_Reason, #state{fd = Fd}) ->
+    erlinotify_nif:stop(Fd),
+    {close, Fd}.
 
+-spec code_change(_, #state{}, _) -> {ok, #state{}}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -151,21 +167,26 @@ code_change(_OldVsn, State, _Extra) ->
 %%        Dirname = filelib:dirname()
 %% @doc Makes a call to the nif to add a resource to
 %% watch. Logs on error
-do_watch(File, State) ->
-    case erlinotify_nif:add_watch(State#state.fd, File) of
-        {ok, Wd} -> ets:insert(State#state.watchdescriptors, {Wd, File}),
+-spec do_watch(Dirname :: filelib:dirname(), State :: #state{})
+    -> #state{}.
+do_watch(Dirname, State) ->
+    case erlinotify_nif:add_watch(State#state.fd, Dirname) of
+        {ok, Wd} -> ets:insert(State#state.watchdescriptors, {Wd, Dirname}),
                     State;
-        Error -> ?log([Error, File]),
+        Error -> ?log([Error, Dirname]),
                  State
     end.
 
-do_watch(File, CB, State) ->
-    case erlinotify_nif:add_watch(State#state.fd, File) of
-        {ok, Wd} -> ets:insert(State#state.dirnames, {File, Wd}),
-                    ets:insert(State#state.callbacks, {File, CB}),
-                    ets:insert(State#state.watchdescriptors, {Wd, File}),
+% TODO: CB type?
+-spec do_watch(Dirname :: filelib:dirname(), any(), State :: #state{})
+    -> #state{}.
+do_watch(Dirname, CB, State) ->
+    case erlinotify_nif:add_watch(State#state.fd, Dirname) of
+        {ok, Wd} -> ets:insert(State#state.dirnames, {Dirname, Wd}),
+                    ets:insert(State#state.callbacks, {Dirname, CB}),
+                    ets:insert(State#state.watchdescriptors, {Wd, Dirname}),
                     State;
-        Error -> ?log([Error, File]),
+        Error -> ?log([Error, Dirname]),
                  State
     end.
 
@@ -174,12 +195,14 @@ do_watch(File, CB, State) ->
 %%        Dirname = filelib:dirname()
 %% @doc Makes a call to the nif to remove a resource to
 %% watch. Logs on error
-do_unwatch(File, State) ->
-    case ets:lookup(State#state.dirnames, File) of
+-spec do_unwatch(Dirname :: filelib:dirname(), State :: #state{})
+    -> #state{}.
+do_unwatch(Dirname, State) ->
+    case ets:lookup(State#state.dirnames, Dirname) of
         [] -> State;
-        [{File,Wd}] ->
-            ets:delete(State#state.dirnames, File),
-            ets:delete(State#state.callbacks, File),
+        [{Dirname,Wd}] ->
+            ets:delete(State#state.dirnames, Dirname),
+            ets:delete(State#state.callbacks, Dirname),
             ets:delete(State#state.watchdescriptors, Wd),
             erlinotify_nif:remove_watch(State#state.fd, Wd),
             State
@@ -189,11 +212,9 @@ do_unwatch(File, State) ->
 %% @doc Rewatch everything in the ets table. Assigning a new
 %% Wd as we move through.
 rewatch(State) ->
-    case ets:delete_all_objects(State#state.watchdescriptors) of
-        true ->  Key = ets:first(State#state.dirnames),
-                 rewatch(State, Key);
-        Error -> Error
-    end.
+    ets:delete_all_objects(State#state.watchdescriptors),
+    Key = ets:first(State#state.dirnames),
+    rewatch(State, Key).
 
 rewatch(State, '$end_of_table') ->
     {ok, State};
