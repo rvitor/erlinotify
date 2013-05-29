@@ -57,7 +57,6 @@ erlinotify_nif_stop(ErlNifEnv* env,
                     int argc,
                     const ERL_NIF_TERM argv[])
 {
-  ERL_NIF_TERM ret;
   state_t* state;
   int res;
 
@@ -79,10 +78,11 @@ erlinotify_nif_stop(ErlNifEnv* env,
   will see a closed fd after this call */
   res = close(state->fd);
 
-  if (res < 0) return ret = enif_make_tuple2(env,
-    enif_make_atom(env, "error"),
-    enif_make_string(env, "unable to stop watching", ERL_NIF_LATIN1)
-  );
+  if (res < 0) {
+    return enif_make_tuple2(env,
+      enif_make_atom(env, "error"),
+      enif_make_string(env, "unable to stop watching", ERL_NIF_LATIN1));
+  }
 
   return enif_make_atom(env, "ok");
 }
