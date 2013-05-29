@@ -8,9 +8,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// TODO:handle unload?
-// Thread termination when joined?
-// Terminate Thread on stop?
+/* NOTE: the spawned thread will terminate "automagically" because the
+outer calling thread close()s the file descriptor the spawned thread
+select()s. Thus the spawned thread will automatically come to an end
+without the need to explicitly join. */
 
 #define MAXBUFLEN 1024
 #define EVENT_SIZE  ( sizeof (struct inotify_event) )
@@ -32,22 +33,20 @@ erlinotify_nif_start(ErlNifEnv* env,
   state_t* state =
     enif_alloc_resource(erlinotify_nif_RESOURCE,
                         sizeof(state_t));
-  ErlNifPid* pid = (ErlNifPid*) enif_alloc(sizeof(ErlNifPid));
-  enif_self(env, pid);
-  state->pid = pid;
+  if (NULL == state) return enif_make_tuple2(env,
+    enif_make_atom(env, "error"),
+    enif_make_string(env, "unable to allocate state", ERL_NIF_LATIN1)
+  );
+  enif_self(env, &(state->pid));
   state->fd = inotify_init();
   ERL_NIF_TERM result = enif_make_resource(env, state);
-  enif_release_resource(state);
-  state->opts = enif_thread_opts_create("thread_opts");
 
-  if( enif_thread_create("", &(state->qthread), thr_main, state,
-                         state->opts) != 0) {
-    enif_free(state->pid);
-    enif_free(state->opts);
-    return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                     enif_make_string(env, "unable to create thread",
-                                      ERL_NIF_LATIN1)
-                     );
+  if (0 != enif_thread_create("", &(state->qthread), thr_main, state, NULL)) {
+    enif_release_resource(state);
+    return enif_make_tuple2(env, 
+      enif_make_atom(env, "error"),
+      enif_make_string(env, "unable to create thread", ERL_NIF_LATIN1)
+    );
   }
 
   return enif_make_tuple2(env, enif_make_atom(env, "ok"), result);
@@ -60,44 +59,38 @@ erlinotify_nif_stop(ErlNifEnv* env,
 {
   ERL_NIF_TERM ret;
   state_t* state;
-  int r;
-  //void* resp;
+  int res;
 
-  if(argc != 1) {
+  if (argc != 1) {
     return enif_make_badarg(env);
   }
 
-  if( !enif_get_resource(
+  if (!enif_get_resource(
                          env, argv[0],
                          erlinotify_nif_RESOURCE,
                          (void**) &state)) {
     return enif_make_badarg(env);
   }
+  /* let the gc do the work. NOTE: enif_free wil segfault, 
+  MUST use enif_release_resource here */
+  enif_release_resource(state);
 
-  r = close (state->fd);
-  //enif_thread_join(state->qthread, &resp);
-  //enif_thread_opts_destroy(state->opts);
+  /* implicitly terminates the loop in thr_main() because select()
+  will see a closed fd after this call */
+  res = close(state->fd);
 
-  if (r < 0) {
-    ret = enif_make_tuple2(env, enif_make_atom(env, "error"),
-                           enif_make_string(env, "unable to stop watching",
-                                            ERL_NIF_LATIN1)
-                           );
-  }
-  else {
-    ret = enif_make_atom(env, "ok");
-  }
-  //enif_free(state);
-  return ret;
+  if (res < 0) return ret = enif_make_tuple2(env,
+    enif_make_atom(env, "error"),
+    enif_make_string(env, "unable to stop watching", ERL_NIF_LATIN1)
+  );
+
+  return enif_make_atom(env, "ok");
 }
 
 static void
 erlinotify_nif_resource_cleanup(ErlNifEnv* env, void* arg)
 {
-    /* Delete any dynamically allocated memory stored in state_t */
-    state_t* state = (state_t*) arg;
-    enif_free(state->pid);
-    enif_free(state->opts);
+    /* empty as for now */
 }
 
 static ERL_NIF_TERM
@@ -212,7 +205,7 @@ read_events(ErlNifEnv* env, void* obj)
                            enif_make_int(env, pevent->cookie),
                            name
                            );
-    enif_send(NULL, state->pid, env, msg);
+    enif_send(NULL, &(state->pid), env, msg);
     enif_clear_env(env);
     count++;
   }
@@ -225,13 +218,16 @@ thr_main(void* obj)
 {
     state_t* state = (state_t*) obj;
     fd_set rfds;
-    FD_ZERO (&rfds);
-    FD_SET (state->fd, &rfds);
+    FD_ZERO(&rfds);
+    FD_SET(state->fd, &rfds);
     ErlNifEnv* env = enif_alloc_env();
-    while(select (FD_SETSIZE, &rfds, NULL, NULL, NULL) > 0){
+    /* loop will terminate as soon as main thread calls close(state->fd) */
+    while (0 < select(FD_SETSIZE, &rfds, NULL, NULL, NULL)) {
       read_events(env, state);
     }
     enif_free_env(env);
+    /* tell the VM that we are done now. */
+    enif_thread_exit(NULL);
     return NULL;
 }
 
@@ -313,5 +309,15 @@ on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 
     return 0;
 }
+static int
+on_upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data, ERL_NIF_TERM load_info)
+{
+    return 0;
+}
 
-ERL_NIF_INIT(erlinotify_nif, nif_funcs, &on_load, NULL, NULL, NULL);
+static void
+on_unload(ErlNifEnv* env, void* priv_data)
+{
+}
+
+ERL_NIF_INIT(erlinotify_nif, nif_funcs, &on_load, NULL, &on_upgrade, &on_unload);

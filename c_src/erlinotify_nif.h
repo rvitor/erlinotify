@@ -5,10 +5,9 @@
 
 typedef struct
 {
-  ErlNifThreadOpts* opts;
   ErlNifTid qthread;
   int fd;
-  ErlNifPid* pid;
+  ErlNifPid pid;
 } state_t;
 
 static ErlNifResourceType* erlinotify_nif_RESOURCE = NULL;
