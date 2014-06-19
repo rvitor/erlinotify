@@ -17,7 +17,7 @@ Add the library to your rebar config
 {
   deps,
   [
-   {erlnotify, "0.1.*", {git, "git://github.com/dipthegeezer/erlinotify.git", "HEAD"}},
+   {erlinotify, ".*", {git, "git://github.com/dipthegeezer/erlinotify.git", "HEAD"}},
    ....
   ]
 }.
